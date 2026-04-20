@@ -2,7 +2,6 @@ import streamlit as st
 import os
 from pathlib import Path
 from datetime import datetime
-import re
 
 st.set_page_config(page_title="Content Hub — Shut Up and Build", page_icon="")
 
@@ -37,10 +36,9 @@ st.title("📝 Content Hub")
 st.markdown("**Shut Up and Build**")
 st.markdown("---")
 
-# Vault path - use home directory expansion
-VAULT_BASE = Path(os.path.expanduser("~/.openclaw/vault/dawn-vault/shared/content"))
-APPROVED_DIR = VAULT_BASE / "approved"
-MAYA_REF = VAULT_BASE / "maya-reference.md"
+# Use local content folder (synced from vault)
+CONTENT_DIR = Path(__file__).parent / "content"
+VAULT_CONTENT = Path(os.path.expanduser("~/.openclaw/vault/dawn-vault/shared/content"))
 
 # Init session state
 if 'edit_mode' not in st.session_state:
@@ -60,26 +58,27 @@ with col1:
 
 with col2:
     if st.session_state.edit_mode and st.button("💾 Save to Vault"):
-        # Save all drafts
+        from pathlib import Path
+        
+        VAULT_BASE = Path(os.path.expanduser("~/.openclaw/vault/dawn-vault/shared/content"))
+        APPROVED_DIR = VAULT_BASE / "approved"
+        MAYA_REF = VAULT_BASE / "maya-reference.md"
+        
         APPROVED_DIR.mkdir(parents=True, exist_ok=True)
         
         for date_key, full_text in st.session_state.draft_data.items():
             if full_text.strip():
-                # Figure out actual filename
                 date_str = date_key.replace("April ", "2026-04-")
                 original_file = VAULT_BASE / f"{date_str}.md"
                 
-                # Write to original file
                 if original_file.exists():
                     with open(original_file, 'w') as f:
                         f.write(full_text)
                 
-                # Write to approved folder
                 approved_file = APPROVED_DIR / f"{date_str}.md"
                 with open(approved_file, 'w') as f:
                     f.write(full_text)
         
-        # Append to Maya reference
         maya_entry = f"\n\n## Saved for Maya — {datetime.now().strftime('%B %d, %Y')}\n"
         for date_key, full_text in st.session_state.draft_data.items():
             if full_text.strip():
@@ -96,11 +95,8 @@ if st.session_state.saved:
 
 st.markdown("---")
 
-def parse_content_file(filepath):
-    """Parse a content markdown file into drafts"""
-    with open(filepath) as f:
-        content = f.read()
-    
+def parse_content_file(content):
+    """Parse content string into drafts"""
     drafts = []
     current = {}
     
@@ -111,13 +107,12 @@ def parse_content_file(filepath):
             current = {'title': line.replace('### Draft', '').strip(), 'body': [line]}
         elif line.strip() == '---':
             if current and current.get('body'):
-                current['body'].append(line)
                 drafts.append(current)
                 current = {}
-            else:
-                current['body'].append(line)
         else:
-            if current:
+            if current or line.startswith('#'):
+                if current is None:
+                    current = {'body': []}
                 current['body'].append(line)
     
     if current and current.get('body'):
@@ -125,49 +120,35 @@ def parse_content_file(filepath):
     
     return drafts
 
-def drafts_to_text(drafts, date_str):
-    """Convert parsed drafts back to markdown text"""
-    lines = [f"# Content — {date_str}\n", "## DRAFTS — Ready for Quality Check\n"]
-    for i, d in enumerate(drafts, 1):
-        lines.append(f"### Draft {i}: {d.get('title', '')}\n")
-        lines.extend(d.get('body', []))
-        lines.append('\n---\n')
-    return '\n'.join(lines)
+# Load from local content folder (works on Vercel)
+content_files = sorted(CONTENT_DIR.glob("2026-*.md"), reverse=True)[:7]
 
-# Load and display content
-try:
-    content_files = sorted(VAULT_BASE.glob("2026-*.md"), reverse=True)[:7]
+for f in content_files:
+    date_str = f.stem.replace("2026-04-", "April ")
+    date_key = date_str
     
-    for f in content_files:
-        date_str = f.stem.replace("2026-04-", "April ")
-        
-        # Normalize date for state key
-        date_key = date_str
-        
-        if date_key not in st.session_state.draft_data:
-            st.session_state.draft_data[date_key] = f.read()
-        
-        st.markdown(f"### 📅 {date_str}")
-        
-        if st.session_state.edit_mode:
-            edited = st.text_area(
-                "",
-                value=st.session_state.draft_data[date_key],
-                height=350,
-                label_visibility="collapsed",
-                key=f"edit_{date_key}"
-            )
-            st.session_state.draft_data[date_key] = edited
-        else:
-            drafts = parse_content_file(f)
-            for d in drafts:
-                body = '\n'.join(d.get('body', [])).strip().replace('\n', '<br>')
-                if body:
-                    st.markdown(f"<div class='content-card'>{body}</div>", unsafe_allow_html=True)
-        
-        st.markdown("---")
-        
-except Exception as e:
-    st.error(f"Error loading content: {e}")
+    if date_key not in st.session_state.draft_data:
+        st.session_state.draft_data[date_key] = f.read_text()
+    
+    st.markdown(f"### 📅 {date_str}")
+    
+    if st.session_state.edit_mode:
+        edited = st.text_area(
+            "",
+            value=st.session_state.draft_data[date_key],
+            height=350,
+            label_visibility="collapsed",
+            key=f"edit_{date_key}"
+        )
+        st.session_state.draft_data[date_key] = edited
+    else:
+        content = st.session_state.draft_data[date_key]
+        drafts = parse_content_file(content)
+        for d in drafts:
+            body = '\n'.join(d.get('body', [])).strip().replace('\n', '<br>')
+            if body and not body.startswith('<br>'):
+                st.markdown(f"<div class='content-card'>{body}</div>", unsafe_allow_html=True)
+    
+    st.markdown("---")
 
 st.caption("*Content synced from vault. Edit mode saves to vault + Maya reference.*")
