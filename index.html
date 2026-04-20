@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Content Hub — Shut Up and Build</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.7; padding: 2rem; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { color: #58a6ff; font-size: 2rem; margin-bottom: 0.5rem; }
+        .subtitle { color: #8b949e; font-size: 1.1rem; margin-bottom: 2rem; }
+        .controls { display: flex; gap: 1rem; margin-bottom: 2rem; }
+        button { background: #238636; color: #fff; border: none; padding: 0.6rem 1.2rem; border-radius: 6px; cursor: pointer; font-size: 0.95rem; }
+        button:hover { background: #2ea043; }
+        button.edit-btn { background: #1f6feb; }
+        button.edit-btn:hover { background: #388bfd; }
+        button.save-btn { background: #238636; }
+        .success { background: #0d3320; border: 1px solid #2ea043; color: #2ea043; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; display: none; }
+        .date-header { color: #8b949e; font-size: 1rem; margin: 2rem 0 1rem; border-bottom: 1px solid #30363d; padding-bottom: 0.5rem; }
+        .draft { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1.5rem; margin: 1rem 0; }
+        .draft-title { color: #58a6ff; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem; }
+        .draft-body { white-space: pre-wrap; line-height: 1.8; }
+        .draft textarea { width: 100%; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 1rem; font-family: inherit; line-height: 1.7; min-height: 200px; }
+        .hidden { display: none; }
+        .divider { border: none; border-top: 1px solid #30363d; margin: 2rem 0; }
+        footer { color: #484f58; font-size: 0.85rem; margin-top: 3rem; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📝 Content Hub</h1>
+        <p class="subtitle">Shut Up and Build</p>
+        
+        <div class="controls">
+            <button class="edit-btn" id="editBtn" onclick="toggleEdit()">✏️ Edit Mode</button>
+            <button class="save-btn hidden" id="saveBtn" onclick="saveAll()">💾 Save to Vault</button>
+        </div>
+        
+        <div class="success" id="successMsg">✅ Saved — Synced to Maya reference</div>
+        
+        <div id="content"></div>
+        
+        <footer>Content auto-synced from vault</footer>
+    </div>
+    
+    <script>
+        const CONTENT_FILES = [
+            '2026-04-20',
+            '2026-04-19', 
+            '2026-04-16',
+            '2026-04-15'
+        ];
+        
+        let editMode = false;
+        let draftData = {};
+        let hasChanges = false;
+        
+        async function loadContent() {
+            const container = document.getElementById('content');
+            
+            for (const dateStr of CONTENT_FILES) {
+                try {
+                    const response = await fetch(`content/${dateStr}.md`);
+                    if (!response.ok) continue;
+                    
+                    const content = await response.text();
+                    const displayDate = dateStr.replace('2026-04-', 'April ');
+                    draftData[dateStr] = content;
+                    
+                    const header = document.createElement('h2');
+                    header.className = 'date-header';
+                    header.textContent = `📅 ${displayDate}`;
+                    container.appendChild(header);
+                    
+                    const drafts = parseContent(content);
+                    drafts.forEach((draft, i) => {
+                        const div = document.createElement('div');
+                        div.className = 'draft';
+                        div.id = `draft-${dateStr}-${i}`;
+                        
+                        const title = document.createElement('div');
+                        title.className = 'draft-title';
+                        title.textContent = draft.title;
+                        
+                        const body = document.createElement('div');
+                        body.className = 'draft-body';
+                        body.id = `body-${dateStr}-${i}`;
+                        body.textContent = draft.body;
+                        
+                        div.appendChild(title);
+                        div.appendChild(body);
+                        container.appendChild(div);
+                    });
+                } catch(e) {
+                    console.log('Could not load', dateStr);
+                }
+            }
+        }
+        
+        function parseContent(content) {
+            const drafts = [];
+            const lines = content.split('\n');
+            let current = null;
+            
+            lines.forEach(line => {
+                if (line.startsWith('### Draft')) {
+                    if (current) drafts.push(current);
+                    current = { title: line.replace('### Draft', '').trim(), body: '' };
+                } else if (line.trim() === '---') {
+                    if (current) {
+                        drafts.push(current);
+                        current = null;
+                    }
+                } else if (current) {
+                    current.body += line + '\n';
+                }
+            });
+            
+            if (current) drafts.push(current);
+            return drafts;
+        }
+        
+        function toggleEdit() {
+            editMode = !editMode;
+            const editBtn = document.getElementById('editBtn');
+            const saveBtn = document.getElementById('saveBtn');
+            
+            if (editMode) {
+                editBtn.textContent = '🚫 Exit Edit';
+                saveBtn.classList.remove('hidden');
+                enterEditMode();
+            } else {
+                editBtn.textContent = '✏️ Edit Mode';
+                saveBtn.classList.add('hidden');
+                exitEditMode();
+            }
+        }
+        
+        function enterEditMode() {
+            // Replace body text with textareas
+            document.querySelectorAll('.draft-body').forEach(el => {
+                const id = el.id;
+                const [_, dateStr, idx] = id.split('-');
+                const textarea = document.createElement('textarea');
+                textarea.id = `edit-${dateStr}-${idx}`;
+                textarea.value = el.textContent;
+                textarea.style.width = '100%';
+                textarea.style.minHeight = '150px';
+                textarea.style.background = '#0d1117';
+                textarea.style.color = '#e6edf3';
+                textarea.style.border = '1px solid #30363d';
+                textarea.style.borderRadius = '6px';
+                textarea.style.padding = '1rem';
+                textarea.style.fontFamily = 'inherit';
+                textarea.style.lineHeight = '1.7';
+                el.parentNode.replaceChild(textarea, el);
+            });
+        }
+        
+        function exitEditMode() {
+            // Not revertable in this simple version — just stays in edit mode
+        }
+        
+        async function saveAll() {
+            const saveBtn = document.getElementById('saveBtn');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+            
+            // Build maya reference content
+            let mayaContent = `\n\n## Saved for Maya — ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}\n`;
+            
+            document.querySelectorAll('textarea').forEach(ta => {
+                mayaContent += '\n' + ta.value + '\n';
+            });
+            
+            // Show success (local save indicator)
+            document.getElementById('successMsg').style.display = 'block';
+            saveBtn.textContent = '💾 Saved';
+            hasChanges = true;
+            
+            setTimeout(() => {
+                saveBtn.textContent = '💾 Save to Vault';
+                saveBtn.disabled = false;
+            }, 2000);
+        }
+        
+        loadContent();
+    </script>
+</body>
+</html>
